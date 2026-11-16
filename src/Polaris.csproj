@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -10,22 +10,28 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets/app.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
-    <DebugType>none</DebugType>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AssemblyTitle>Polaris 修复插件</AssemblyTitle>
     <Product>Polaris 修复插件</Product>
+    <Company>local</Company>
     <FileVersion>1.0.0.0</FileVersion>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <Version>1.0</Version>
+    <DebugType>none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 编译期需要 dnlib, 运行期从内嵌资源加载 (见 Program.AssemblyResolve), 不落盘 -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="dnlib" Version="4.5.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="lib\dnlib.dll" LogicalName="dnlib.dll" />
+    <!-- 单文件交付: dnlib 与参照版本直接打进 exe -->
+    <EmbeddedResource Include="lib\dnlib.dll" LogicalName="dnlib.dll" Condition="Exists('lib\dnlib.dll')" />
     <EmbeddedResource Include="assets\logo.png" LogicalName="logo.png" />
+    <EmbeddedResource Include="assets\sponsor_wechat_s.jpg" LogicalName="sponsor_wechat_s.jpg" />
+    <EmbeddedResource Include="assets\sponsor_alipay_s.jpg" LogicalName="sponsor_alipay_s.jpg" />
     <EmbeddedResource Include="lib\pcl214.exe" LogicalName="pcl214.exe" Condition="Exists('lib\pcl214.exe')" />
   </ItemGroup>
 

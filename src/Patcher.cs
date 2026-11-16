@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Security.Cryptography;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
@@ -26,11 +27,16 @@ namespace Polaris
         public string StrongName;
 
         public bool P1, P2, P3, P4;
+        public bool HasP1Field;
+        public bool IsPacked;
+        public string PackNote = "";
+        public string Variant = "";
         public bool HasRestriction;
         public bool HasBackup;
         public string BackupPath;
 
         public bool IsPatched => P1 && P2 && P3 && P4;
+        public bool IsCorePatched => P1 && P2 && P3;
         public bool IsSupported => HasRestriction;
     }
 
@@ -52,6 +58,29 @@ namespace Polaris
                     if (name.IndexOf("Plain Craft Launcher", StringComparison.OrdinalIgnoreCase) >= 0) return true;
                                         return mod.GetTypes().Any(t => t.FullName == "PCL.ModBase");
                 }
+            }
+            catch
+            {
+                return LooksLikePclByStrings(path);
+            }
+        }
+
+        static bool LooksLikePclByStrings(string path)
+        {
+            try
+            {
+                var d = File.ReadAllBytes(path);
+                if (d.Length < 1024 * 1024) return false;
+                if (d.Length < 2 || d[0] != 0x4D || d[1] != 0x5A) return false;
+                var marks = new[]
+                {
+                    Encoding.ASCII.GetBytes("PCL.ModBase"),
+                    Encoding.ASCII.GetBytes("Plain Craft Launcher 2"),
+                    Encoding.ASCII.GetBytes("VersionDisplay")
+                };
+                int hit = 0;
+                foreach (var m in marks) if (IndexOf(d, m) > 0) hit++;
+                return hit >= 2;
             }
             catch { return false; }
         }
@@ -89,10 +118,24 @@ namespace Polaris
             var fvi = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
             st.FileVersion = fvi.FileVersion ?? "";
 
+            var bytes = File.ReadAllBytes(path);
             ModuleDefMD mod;
-            try { mod = ModuleDefMD.Load(File.ReadAllBytes(path)); }
+            try { mod = ModuleDefMD.Load(bytes); }
             catch (Exception ex)
             {
+                var pack = DescribePacked(bytes);
+                if (pack != null)
+                {
+                    st.IsPacked = true;
+                    st.PackNote = pack;
+                    st.Variant = "加壳";
+                    st.VersionDisplay = "未知（已加壳）";
+                    st.AsmVersion = "";
+                    st.StrongName = "(unknown)";
+                    st.HasRestriction = false;
+                    st.P1 = st.P2 = st.P3 = st.P4 = false;
+                    return st;
+                }
                 throw new InvalidOperationException("不是有效的 .NET 程序: " + ex.Message);
             }
             using (mod)
@@ -100,11 +143,13 @@ namespace Polaris
                 st.AsmVersion = mod.Assembly?.Version?.ToString() ?? "";
                 st.StrongName = mod.Assembly?.PublicKey?.Token?.ToString() ?? "(none)";
                 st.VersionDisplay = ConstStr(mod, "PCL.ModBase", "VersionDisplay");
+                st.Variant = VariantOf(st.VersionDisplay);
                 st.VersionCode = ConstStr(mod, "PCL.ModBase", "VersionCode");
 
                 var secret = mod.GetTypes().FirstOrDefault(t => t.FullName == "PCL.ModSecret");
                 var rf = secret?.Fields.FirstOrDefault(f => f.Name == "RestrictMcDownload");
-                st.P1 = rf != null && rf.HasConstant && rf.Constant?.Value is bool b && !b;
+                st.P1 = rf == null || (rf.HasConstant && rf.Constant?.Value is bool b && !b);
+                st.HasP1Field = rf != null;
 
                 var pdi = mod.GetTypes().FirstOrDefault(t => t.FullName == "PCL.PageDownloadInstall");
                 var li = pdi?.Methods.FirstOrDefault(m => m.Name == "LoaderInit" && m.HasBody);
@@ -135,6 +180,78 @@ namespace Polaris
                     rf != null;
             }
             return st;
+        }
+
+        private static int IndexOf(byte[] hay, byte[] needle)
+        {
+            if (needle.Length == 0 || hay.Length < needle.Length) return -1;
+            int last = hay.Length - needle.Length;
+            for (int i = 0; i <= last; i++)
+            {
+                if (hay[i] != needle[0]) continue;
+                int j = 1;
+                while (j < needle.Length && hay[i + j] == needle[j]) j++;
+                if (j == needle.Length) return i;
+            }
+            return -1;
+        }
+
+        static string DescribePacked(byte[] d)
+        {
+            try
+            {
+                if (d.Length < 0x40 || d[0] != 0x4D || d[1] != 0x5A) return "不是 PE 文件";
+                int pe = BitConverter.ToInt32(d, 0x3C);
+                if (pe <= 0 || pe + 0x18 > d.Length || d[pe] != 0x50 || d[pe + 1] != 0x45) return "不是 PE 文件";
+
+                int nsec = BitConverter.ToUInt16(d, pe + 6);
+                int optSize = BitConverter.ToUInt16(d, pe + 20);
+                int optOff = pe + 24;
+                int magic = BitConverter.ToUInt16(d, optOff);
+                int ddOff = optOff + (magic == 0x10B ? 96 : 112);
+                if (ddOff + 15 * 8 > d.Length) return null;
+                int clrRva = BitConverter.ToInt32(d, ddOff + 14 * 8);
+
+                bool vmp = IndexOf(d, Encoding.ASCII.GetBytes("VMProtect")) > 0;
+                bool themida = IndexOf(d, Encoding.ASCII.GetBytes("Themida")) > 0;
+
+                if (clrRva != 0)
+                    return "CLR 头存在但 dnlib 解析失败（可能被混淆或截断）";
+
+                var sb = new StringBuilder("CLR 目录为空（PE 里没有托管元数据）");
+                sb.Append("，节数 ").Append(nsec);
+                sb.Append("，大小 ").Append(d.Length / 1024 / 1024).Append(" MB");
+                if (vmp) sb.Append("；检出 VMProtect 特征");
+                if (themida) sb.Append("；检出 Themida 特征");
+
+                var ver = SniffVersion(d);
+                if (ver != null) sb.Append("；内含版本串 ").Append(ver);
+                return sb.ToString();
+            }
+            catch { return null; }
+        }
+
+        static string SniffVersion(byte[] d)
+        {
+            var rx = new System.Text.RegularExpressions.Regex(@"2\.\d{1,2}\.\d{1,2}\.\d{1,2}");
+            var set = new System.Collections.Generic.List<string>();
+            var text = Encoding.ASCII.GetString(d);
+            foreach (System.Text.RegularExpressions.Match m in rx.Matches(text))
+            {
+                if (set.Contains(m.Value)) continue;
+                if (m.Value.Contains("2.0.0.0") || m.Value.Contains("2.1.5") || m.Value.Contains("2.0.2")) continue;
+                set.Add(m.Value);
+                if (set.Count >= 3) break;
+            }
+            return set.Count == 0 ? null : string.Join(" / ", set.ToArray());
+        }
+
+        private static string VariantOf(string display)
+        {
+            if (string.IsNullOrEmpty(display)) return "未知";
+            foreach (var v in new[] { "正式版", "快照版", "社区版", "测试版", "开发版" })
+                if (display.StartsWith(v, StringComparison.Ordinal)) return v;
+            return display.Length > 3 ? display.Substring(0, 3) : display;
         }
 
         private static string ConstStr(ModuleDefMD mod, string type, string field)
@@ -213,14 +330,16 @@ namespace Polaris
             }
 
             var after = Analyze(path);
-            if (!after.IsPatched)
+            var coreOk = after.P1 && after.P2 && after.P3;
+            if (!coreOk)
             {
                                 File.Copy(backup, path, true);
                 throw new InvalidOperationException(
                     $"复验未通过（P1={after.P1} P2={after.P2} P3={after.P3} P4={after.P4}），已自动还原原文件。");
             }
 
-            log?.Invoke("INFO 复验通过：4/4 补丁点已落地");
+            if (after.P4) log?.Invoke("INFO 复验通过：4/4 补丁点已落地");
+            else log?.Invoke("WARN 复验通过：P1–P3 已生效，P4（整合包）未应用 —— 参照版本与该版本不兼容，不影响原版下载");
             log?.Invoke("INFO 新文件 SHA-256 " + Sha256(path));
             return lines;
         }

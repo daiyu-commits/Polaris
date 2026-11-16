@@ -61,7 +61,17 @@ namespace Polaris
                         Console.WriteLine($"display   {st.VersionDisplay} ({st.VersionCode})");
                         Console.WriteLine($"asmver    {st.AsmVersion}   strongname={st.StrongName}");
                         Console.WriteLine($"restrict  {st.HasRestriction}");
-                        Console.WriteLine($"patched   P1={st.P1} P2={st.P2} P3={st.P3} P4={st.P4}  => {(st.IsPatched ? "已安装" : "未安装")}");
+                        if (st.IsPacked)
+                        {
+                            Console.WriteLine($"packed    {st.PackNote}");
+                            Console.WriteLine("patched   无法修补（加壳/非托管）");
+                            return 2;
+                        }
+                        string state = st.HasRestriction
+                            ? (st.IsPatched ? "已安装" : "未安装")
+                            : (st.IsCorePatched ? "无需修复（该版本未受限）" : "未知");
+                        Console.WriteLine($"variant   {st.Variant}");
+                        Console.WriteLine($"patched   P1={st.P1} P2={st.P2} P3={st.P3} P4={st.P4}  => {state}");
                         Console.WriteLine($"backup    {(st.HasBackup ? st.BackupPath : "(none)")}");
                         return 0;
                     }

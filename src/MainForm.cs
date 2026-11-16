@@ -43,8 +43,8 @@ namespace Polaris
         private bool[] _chipTarget = new bool[4];
         private Color _pillColor = Theme.Muted;
         private Color _pillTarget = Theme.Muted;
-        private RectangleF _switchRect, _qqRect;
-        private bool _switchHot, _qqHot;
+        private RectangleF _switchRect, _qqRect, _sponsorRect;
+        private bool _switchHot, _qqHot, _sponsorHot;
 
         private sealed class Star { public float X, Y, VX, VY, R, Phase, Tw; }
 
@@ -427,6 +427,44 @@ namespace Polaris
 
                 using (var b = new SolidBrush(_qqHot ? Color.White : Color.FromArgb(198, 176, 232)))
                     g.DrawString(text, f, b, box.X + Scale(24), box.Y + (box.Height - size.Height) / 2f);
+
+                const string sp = "赞助作者";
+                var ss = g.MeasureString(sp, f);
+                float sw = ss.Width + Scale(34);
+                var sbox = new RectangleF(box.Right + Scale(8), y, sw, hgt);
+                _sponsorRect = sbox;
+
+                Color gold = Color.FromArgb(255, 196, 84);
+                Theme.FillRound(g, sbox, hgt / 2, Color.FromArgb(_sponsorHot ? 40 : 16, gold));
+                Theme.StrokeRound(g, sbox, hgt / 2, Color.FromArgb(_sponsorHot ? 165 : 80, gold));
+                using (var b2 = new SolidBrush(Color.FromArgb(_sponsorHot ? 255 : 210, gold)))
+                    g.FillEllipse(b2, sbox.X + Scale(12), sbox.Y + sbox.Height / 2 - Scale(3.2f), Scale(6.4f), Scale(6.4f));
+                using (var b3 = new SolidBrush(_sponsorHot ? Color.White : Color.FromArgb(226, 196, 160)))
+                    g.DrawString(sp, f, b3, sbox.X + Scale(24), sbox.Y + (sbox.Height - ss.Height) / 2f);
+            }
+        }
+
+        private void OpenSponsor()
+        {
+            try
+            {
+                Image wx = LoadResourceImage("sponsor_wechat_s.jpg");
+                Image ali = LoadResourceImage("sponsor_alipay_s.jpg");
+                using (var f = new SponsorForm(wx, ali)) f.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                Log("FAIL", "打开赞助页失败: " + ex.Message);
+            }
+        }
+
+        private static Image LoadResourceImage(string name)
+        {
+            using (var st = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+            {
+                if (st == null) throw new InvalidOperationException("缺少资源: " + name);
+                using (var tmp = Image.FromStream(st))
+                    return new Bitmap(tmp);
             }
         }
 
@@ -550,11 +588,13 @@ namespace Polaris
         {
             bool hot = _switchRect.Contains(e.Location);
             bool qq = _qqRect.Contains(e.Location);
-            if (hot != _switchHot || qq != _qqHot)
+            bool sp = _sponsorRect.Contains(e.Location);
+            if (hot != _switchHot || qq != _qqHot || sp != _sponsorHot)
             {
                 _switchHot = hot;
                 _qqHot = qq;
-                Cursor = qq ? Cursors.Hand : Cursors.Default;
+                _sponsorHot = sp;
+                Cursor = (qq || sp) ? Cursors.Hand : Cursors.Default;
                 Invalidate();
             }
             base.OnMouseMove(e);
@@ -562,6 +602,8 @@ namespace Polaris
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            if (_sponsorRect.Contains(e.Location)) { OpenSponsor(); return; }
+
             if (_qqRect.Contains(e.Location))
             {
                 try
@@ -691,6 +733,7 @@ namespace Polaris
                         Log("INFO", $"   code {c.Code} · {c.Display} · {c.FileName}");
 
                     var best = list[0];
+                    if (string.IsNullOrEmpty(best.Display)) best.Display = "已加壳";
                     Log("OK", list.Count > 1
                         ? $"共 {list.Count} 份，选用版本最新的：{best.Display}（code {best.Code}）"
                         : $"已定位：{best.Display}（code {best.Code}）");
@@ -869,6 +912,20 @@ namespace Polaris
         {
             _pcl = st;
             if (!keepLog) _rtb.Clear();
+            if (st.IsPacked)
+            {
+                SetStatus("已加壳", Theme.Warn);
+                Log("WARN", "这个 exe 不是明文 .NET 程序集，无法做 IL 补丁：" + st.PackNote);
+                Log("INFO", "官方 PCL2 是 5.98 MB 的明文程序集；加壳版本需要用未加壳的原版替换后再修。");
+                if (st.HasBackup) Log("INFO", "此目录有官方原文件备份：" + Path.GetFileName(st.BackupPath) + "（可用「卸载还原」恢复回去）");
+                SetButtons(false);
+                _btnUninstall.Enabled = st.HasBackup;
+                _btnInstall.Text = "无法修补";
+                _btnInstall.SubText = "PACKED";
+                _btnInstall.Invalidate();
+                Invalidate();
+                return;
+            }
             Log("INFO", "目标: " + st.Path);
             Log("INFO", $"版本 {st.VersionDisplay} · VersionCode {st.VersionCode} · asm {st.AsmVersion}");
             Log("INFO", "强名: " + st.StrongName + (st.StrongName == "(none)" ? "（无强名，可直接修补）" : ""));
@@ -879,6 +936,22 @@ namespace Polaris
 
             if (!st.IsSupported)
             {
+                if (st.IsCorePatched)
+                {
+                    SetStatus("无需修复", Theme.Ok);
+                    Log("OK", $"该版本（{st.Variant}）没有下载限制：未发现占位下载任务 / 限制文案，不需要打补丁。");
+                    _btnInstall.Text = "无需修复";
+                    _btnInstall.SubText = "NOT RESTRICTED";
+                    _btnInstall.Enabled = false;
+                    _btnUninstall.Enabled = st.HasBackup && !_busy;
+                    _btnOpen.Enabled = true;
+                    _btnLaunch.Enabled = true;
+                    _btnInstall.Invalidate();
+                    SyncPillLocation();
+                    Invalidate();
+                    return;
+                }
+
                 SetStatus("版本不支持", Theme.Err);
                 Log("WARN", "未找到下载限制特征：可能不是受限版本，或结构已变化。");
                 SetButtons(false);

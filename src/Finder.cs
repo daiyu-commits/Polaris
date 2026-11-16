@@ -11,6 +11,8 @@ namespace Polaris
         public int Code;
         public string Display;
         public string FileName;
+        public string Variant = "";
+        public bool OnDesktop;
     }
 
                         internal static class Finder
@@ -60,12 +62,60 @@ namespace Polaris
                 int code;
                 string display;
                 Patcher.PeekVersion(f, out code, out display);
-                result.Add(new Candidate { Path = f, Code = code, Display = display, FileName = Path.GetFileName(f) });
+                result.Add(new Candidate
+                {
+                    Path = f,
+                    Code = code,
+                    Display = display,
+                    FileName = Path.GetFileName(f),
+                    Variant = VariantOf(display),
+                    OnDesktop = IsDesktopPath(f)
+                });
             }
-            return result.OrderByDescending(c => c.Code).ThenBy(c => c.Path).ToList();
+
+            return result
+                .OrderByDescending(c => VariantWeight(c.Variant))
+                .ThenByDescending(c => c.OnDesktop)
+                .ThenByDescending(c => c.Code)
+                .ThenBy(c => c.Path)
+                .ToList();
         }
 
-                private static bool IsSuspectName(string name)
+                private static int VariantWeight(string variant)
+        {
+            switch (variant)
+            {
+                case "正式版": return 3;
+                case "社区版": return 2;
+                case "快照版": return 1;
+                default: return 0;
+            }
+        }
+
+        private static string VariantOf(string display)
+        {
+            if (string.IsNullOrEmpty(display)) return "";
+            foreach (var v in new[] { "正式版", "社区版", "快照版", "测试版", "开发版" })
+                if (display.StartsWith(v, StringComparison.Ordinal)) return v;
+            return "其他";
+        }
+
+        private static bool IsDesktopPath(string path)
+        {
+            foreach (var root in new[]
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            })
+            {
+                if (string.IsNullOrEmpty(root)) continue;
+                var prefix = root.TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
+                if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsSuspectName(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
             if (name.StartsWith("._cache", StringComparison.OrdinalIgnoreCase)) return false;
