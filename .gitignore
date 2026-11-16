@@ -1,0 +1,6 @@
+bin/
+obj/
+dist/
+src/lib/pcl214.exe
+*.user
+.vs/

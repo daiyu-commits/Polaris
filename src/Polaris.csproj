@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Polaris修复插件</AssemblyName>
+    <RootNamespace>Polaris</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets/app.ico</ApplicationIcon>
+    <Nullable>disable</Nullable>
+    <DebugType>none</DebugType>
+    <AssemblyTitle>Polaris 修复插件</AssemblyTitle>
+    <Product>Polaris 修复插件</Product>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="dnlib" Version="4.5.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="lib\dnlib.dll" LogicalName="dnlib.dll" />
+    <EmbeddedResource Include="assets\logo.png" LogicalName="logo.png" />
+    <EmbeddedResource Include="lib\pcl214.exe" LogicalName="pcl214.exe" Condition="Exists('lib\pcl214.exe')" />
+  </ItemGroup>
+
+</Project>
